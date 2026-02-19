@@ -1,0 +1,102 @@
+{% extends 'servicehub_app/base.html' %}
+
+{% block content %}
+<div class="hero-section text-center mb-5">
+    <h1>Find Trusted Local Experts</h1>
+    <p class="lead">Connecting you with verified pros within a 3km radius.</p>
+    <button onclick="getLocation()" class="btn btn-success btn-lg">Search Nearby Providers</button>
+</div>
+
+<div class="row">
+    <div class="col-md-7">
+        <h3>Available Providers</h3>
+        <div id="provider-results" class="list-group">
+            <p class="text-muted">Click the button above to see providers near you.</p>
+        </div>
+    </div>
+
+    <div class="col-md-5">
+        <h3>My Service History</h3>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover border">
+                <thead class="table-light">
+                    <tr>
+                        <th>Provider</th>
+                        <th>Fee (KES)</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="bookings-table-body">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Load history when page opens
+document.addEventListener('DOMContentLoaded', fetchBookings);
+
+function fetchBookings() {
+    fetch('/api/my-bookings/')
+        .then(res => res.json())
+        .then(data => {
+            const tbody = document.getElementById('bookings-table-body');
+            tbody.innerHTML = data.map(b => `
+                <tr>
+                    <td>${b.provider}</td>
+                    <td>${b.total_fee}</td>
+                    <td><span class="badge bg-info text-dark">${b.status}</span></td>
+                </tr>
+            `).join('');
+        });
+}
+
+function getLocation() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(showPosition);
+    } else {
+        alert("Geolocation is not supported by this browser.");
+    }
+}
+
+function showPosition(position) {
+    const lat = position.coords.latitude;
+    const lon = position.coords.longitude;
+
+    fetch(`/api/nearby-providers/?lat=${lat}&lon=${lon}`)
+        .then(response => response.json())
+        .then(data => {
+            const container = document.getElementById('provider-results');
+            container.innerHTML = data.providers.length === 0
+                ? '<div class="alert alert-warning">No providers found within 3km.</div>'
+                : '';
+
+            data.providers.forEach(p => {
+                container.innerHTML += `
+                    <div class="list-group-item d-flex justify-content-between align-items-center">
+                        <div>
+                            <h5 class="mb-1">${p.name}</h5>
+                            <p class="mb-1 text-muted small">${p.service} • ${p.distance_km}km away</p>
+                        </div>
+                        <button onclick="sendBooking(${p.id})" class="btn btn-primary btn-sm">Book Now</button>
+                    </div>`;
+            });
+        });
+}
+
+function sendBooking(providerId) {
+    fetch(`/api/book/${providerId}/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': '{{ csrf_token }}' }
+    })
+    .then(response => response.json())
+    .then(data => {
+        alert(data.message);
+        fetchBookings(); // Refresh table after booking
+    });
+}
+</script>
+{% endblock %}
