@@ -1,36 +1,50 @@
 {% extends 'servicehub_app/base.html' %}
-
 {% block content %}
-<div class="hero-section text-center mb-5">
-    <h1>Find Trusted Local Experts</h1>
+<div class="hero-section text-center mb-5 p-5 bg-primary text-white rounded-4 shadow">
+    <h1 class="display-4 fw-bold">Find Trusted Local Experts</h1>
     <p class="lead">Connecting you with verified pros within a 3km radius.</p>
-    <button onclick="getLocation()" class="btn btn-success btn-lg">Search Nearby Providers</button>
+    <button onclick="getLocation()" class="btn btn-light btn-lg px-5 rounded-pill shadow-sm">
+        <i class="bi bi-geo-alt-fill me-2"></i>Search Nearby Providers
+    </button>
 </div>
 
-<div class="row">
-    <div class="col-md-7">
-        <h3>Available Providers</h3>
-        <div id="provider-results" class="list-group">
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h3 class="fw-bold">Available Providers</h3>
+        <span id="results-count" class="badge bg-secondary"></span>
+    </div>
+
+    <div id="provider-results" class="row">
+        <div class="col-12 text-center py-5">
             <p class="text-muted">Click the button above to see providers near you.</p>
         </div>
     </div>
 
-    <div class="col-md-5">
-        <h3>My Service History</h3>
-        <div class="table-responsive">
-            <table class="table table-sm table-hover border">
-                <thead class="table-light">
-                    <tr>
-                        <th>Provider</th>
-                        <th>Fee (KES)</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody id="bookings-table-body">
-                    </tbody>
-            </table>
+<div class="modal fade" id="requestModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content rounded-4 border-0 shadow">
+            <div class="modal-header">
+                <h5 class="fw-bold">Request Service from <span id="req-provider-name"></span></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">What do you need help with?</label>
+                    <textarea id="service-description" class="form-control" rows="4"
+                        placeholder="E.g. My kitchen sink is leaking, please bring a pipe wrench..."></textarea>
+                    <div class="form-text mt-2 text-info">
+                        <i class="bi bi-info-circle me-1"></i> The provider will review your description and send a price quote.
+                    </div>
+                </div>
+                <input type="hidden" id="req-provider-id">
+            </div>
+            <div class="modal-footer border-0">
+                <button type="button" class="btn btn-primary w-100 rounded-pill" onclick="submitRequest()">Send Request</button>
+            </div>
         </div>
     </div>
+</div>
+
 </div>
 {% endblock %}
 
@@ -70,33 +84,89 @@ function showPosition(position) {
         .then(response => response.json())
         .then(data => {
             const container = document.getElementById('provider-results');
-            container.innerHTML = data.providers.length === 0
-                ? '<div class="alert alert-warning">No providers found within 3km.</div>'
-                : '';
+            container.innerHTML = ''; // Clear previous
 
-            data.providers.forEach(p => {
+            if (data.providers.length === 0) {
+                container.innerHTML = '<div class="alert alert-warning text-center w-100">No providers found within 3km.</div>';
+                return;
+            }
+
+          data.providers.forEach(p => {
+                let starsHtml = '';
+                const ratingValue = Math.round(p.rating) || 0;
+                const reviewCount = p.review_count || 0;
+
+                if (ratingValue > 0) {
+                    for (let i = 0; i < ratingValue; i++) {
+                        starsHtml += '<i class="bi bi-star-fill text-warning me-1"></i>';
+                    }
+                    for (let i = ratingValue; i < 5; i++) {
+                        starsHtml += '<i class="bi bi-star text-muted me-1"></i>';
+                    }
+                    // Add the count in parentheses
+                    starsHtml += `<span class="text-muted small ms-1">(${reviewCount})</span>`;
+                } else {
+                    starsHtml = '<span class="text-muted small">New Provider</span>';
+                }
+
+                // Insert into the card template as before...
                 container.innerHTML += `
-                    <div class="list-group-item d-flex justify-content-between align-items-center">
-                        <div>
-                            <h5 class="mb-1">${p.name}</h5>
-                            <p class="mb-1 text-muted small">${p.service} • ${p.distance_km}km away</p>
+                    <div class="col-md-4 mb-4">
+                        <div class="card h-100 border-0 shadow-sm rounded-4 overflow-hidden">
+                            <img src="${p.photo || 'https://via.placeholder.com/300'}" class="card-img-top" style="height: 180px; object-fit: cover;">
+                            <div class="card-body p-4">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <h5 class="fw-bold mb-0">${p.name}</h5>
+                                    <div class="d-flex align-items-center">${starsHtml}</div>
+                                </div>
+                                <p class="text-primary fw-semibold small mb-2"></i> ${p.service}</p>
+                                <div class="small text-muted mb-3">
+                                    {#<div><i class="bi bi-telephone me-2"></i>${p.phone}</div>#}
+                                    <div><i class="bi bi-geo-alt me-2"></i>${p.distance_km}km away</div>
+                                </div>
+                                <button onclick="openRequestModal(${p.id}, '${p.name}')" class="btn btn-primary w-100 rounded-pill fw-bold">
+                                    Book Now
+                                </button>
+                            </div>
                         </div>
-                        <button onclick="sendBooking(${p.id})" class="btn btn-primary btn-sm">Book Now</button>
                     </div>`;
-            });
+                });
         });
 }
 
-function sendBooking(providerId) {
+let requestModal;
+document.addEventListener('DOMContentLoaded', () => {
+    requestModal = new bootstrap.Modal(document.getElementById('requestModal'));
+});
+
+function openRequestModal(id, name) {
+    document.getElementById('req-provider-id').value = id;
+    document.getElementById('req-provider-name').innerText = name;
+    requestModal.show();
+}
+
+function submitRequest() {
+    const providerId = document.getElementById('req-provider-id').value;
+    const desc = document.getElementById('service-description').value;
+
+    if(!desc) return alert("Please describe the problem so the pro can prepare.");
+
     fetch(`/api/book/${providerId}/`, {
         method: 'POST',
-        headers: { 'X-CSRFToken': '{{ csrf_token }}' }
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 'description': desc })
     })
-    .then(response => response.json())
+    .then(res => res.json())
     .then(data => {
-        alert(data.message);
-        fetchBookings(); // Refresh table after booking
+        alert("Request sent! Check your history for the provider's quote.");
+        location.reload();
     });
 }
+
+
+
 </script>
 {% endblock %}

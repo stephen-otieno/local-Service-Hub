@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -31,6 +32,7 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'jazzmin',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -39,6 +41,39 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'servicehub_app',
 ]
+
+JAZMIN_SETTINGS = {
+    "site_title": "ServiceHub Admin",
+    "site_header": "ServiceHub",
+    "site_brand": "ServiceHub Management",
+    "welcome_sign": "Welcome to the ServiceHub Admin Dashboard",
+    "copyright": "ServiceHub Ltd",
+    "search_model": ["auth.User", "servicehub_app.Booking"],
+
+    # Links to put on the top navigation bar
+    "topmenu_links": [
+        {"name": "Home", "url": "admin:index", "permissions": ["auth.view_user"]},
+        {"model": "auth.User"},
+        {"name": "View Site", "url": "home", "new_window": True},
+    ],
+
+    # Icons for your models (Uses Font Awesome)
+    "icons": {
+            "auth": "fas fa-users-cog",
+            "auth.user": "fas fa-user",
+            "servicehub_app.Booking": "fas fa-handshake",
+            "servicehub_app.UserProfile": "fas fa-id-card",
+            "servicehub_app.Rating": "fas fa-star",
+            "servicehub_app.ClientFeedback": "fas fa-comment-dots", # Client icon
+            "servicehub_app.ProviderFeedback": "fas fa-tools",      # Provider icon
+        },
+}
+
+# Optional: Add a UI Customizer to change colors live in the browser
+JAZMIN_UI_TWEAKS = {
+    "theme": "flatly",  # You can try "cosmo", "lux", or "darkly"
+    "dark_mode_theme": "darkly",
+}
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -116,3 +151,12 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Redirect to home page after login
+LOGIN_REDIRECT_URL = 'home'
+
+# Redirect to home page after logout
+LOGOUT_REDIRECT_URL = 'home'
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')

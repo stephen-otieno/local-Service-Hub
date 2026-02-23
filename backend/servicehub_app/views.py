@@ -3,10 +3,14 @@ from django.http import JsonResponse
 from django.db.models import Sum
 from math import radians, cos, sin, asin, sqrt
 from django.shortcuts import get_object_or_404, redirect
-from .models import Booking, UserProfile
+from .models import Booking, UserProfile, Rating, Feedback
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.contrib import messages
+from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth import login
+import json
+from django.views.decorators.csrf import csrf_protect
 
 
 # Haversine formula to calculate distance in km
@@ -39,13 +43,17 @@ def find_nearby_providers(request):
     for p in providers:
         if p.latitude and p.longitude:
             dist = calculate_distance(client_lat, client_lon, p.latitude, p.longitude)
-            if dist <= 3.0:  # 3km radius constraint
+            if dist <= 3.0:
                 nearby_list.append({
-                    'name': p.user.username,
+                    'id': p.id,
+                    'name': p.user.get_full_name() or p.user.username,
                     'service': p.service_type,
-                    'distance_km': round(dist, 2)
+                    'phone': p.phone_number,
+                    'photo': p.profile_photo.url if p.profile_photo else None,
+                    'distance_km': round(dist, 2),
+                    'rating': p.get_rating(),
+                    'review_count': p.get_review_count()
                 })
-
     return JsonResponse({'providers': nearby_list})
 
 
@@ -63,35 +71,36 @@ def book_service(request, provider_id):
         Booking.objects.create(
             client=request.user,
             provider=provider_profile.user,
-            total_fee=1000
+            total_amount=1000
         )
         return JsonResponse({'status': 'success', 'message': 'Booking request sent!'})
 
 
+
+
+@csrf_protect
 @login_required
 def create_booking(request, provider_id):
     if request.method == 'POST':
-        provider_profile = get_object_or_404(UserProfile, id=provider_id)
+        data = json.loads(request.body)
+        provider_profile = get_object_or_404(UserProfile, id=provider_id, is_provider=True)
 
-        # Create the booking with a test amount (e.g., 1500 KES)
-        new_booking = Booking.objects.create(
+        Booking.objects.create(
             client=request.user,
             provider=provider_profile.user,
-            total_fee=1500
+            description=data.get('description'),
+            status='Pending'  # No price yet!
         )
+        return JsonResponse({'status': 'success'})
 
-        return JsonResponse({
-            'status': 'success',
-            'message': f'Booking created! Hub Commission: {new_booking.platform_commission}'
-        })
-
+    
 @login_required
 def get_my_bookings(request):
     # Fetch bookings where the current user is the client
     bookings = Booking.objects.filter(client=request.user).order_by('-created_at')
     data = [{
         'provider': b.provider.username,
-        'total_fee': b.total_fee,
+        'total_amount': b.total_amount,
         'status': b.status,
         'date': b.created_at.strftime("%Y-%m-%d")
     } for b in bookings]
@@ -100,24 +109,29 @@ def get_my_bookings(request):
 
 @login_required
 def provider_dashboard(request):
-    # Ensure only providers can access this page
     profile = get_object_or_404(UserProfile, user=request.user)
-    if not profile.is_provider:
-        return redirect('home')
 
-    # Fetch jobs assigned to this provider
-    jobs = Booking.objects.filter(provider=request.user).order_by('-created_at')
+    # All jobs for this provider
+    all_jobs = Booking.objects.filter(provider=request.user).order_by('-created_at')
 
-    # Calculate total earnings (the 90% share)
-    total_earnings = jobs.filter(status='completed').aggregate(Sum('provider_payout'))['provider_payout__sum'] or 0
+    # Filtered lists for the UI
+    active_jobs = all_jobs.filter(is_paid_to_provider=False)
+    payout_history = all_jobs.filter(is_paid_to_provider=True)
+
+    # Financial Summaries
+    total_earned = all_jobs.filter(status='completed').aggregate(Sum('provider_cut'))['provider_cut__sum'] or 0
+    already_paid = payout_history.aggregate(Sum('provider_cut'))['provider_cut__sum'] or 0
+    pending_payout = total_earned - already_paid
 
     context = {
-        'jobs': jobs,
-        'total_earnings': total_earnings,
+        'active_jobs': active_jobs,
+        'payout_history': payout_history,
+        'total_earned': total_earned,
+        'pending_payout': pending_payout,
+        'already_paid': already_paid,
         'profile': profile
     }
     return render(request, 'servicehub_app/provider_dashboard.html', context)
-
 
 def apply_provider(request):
     if request.method == 'POST':
@@ -136,6 +150,7 @@ def apply_provider(request):
             UserProfile.objects.create(
                 user=user,
                 is_provider=True,
+                profile_photo=request.FILES.get('profile_photo'),
                 service_type=data['service_type'],
                 phone_number=data['phone_number'],
                 bio=data['bio'],
@@ -150,3 +165,94 @@ def apply_provider(request):
             messages.error(request, f"Error: {e}")
 
     return render(request, 'servicehub_app/apply_provider.html')
+
+
+def register_client(request):
+    if request.method == 'POST':
+        form = UserCreationForm(request.POST)
+        if form.is_valid():
+            user = form.save()
+            # Create a basic UserProfile for the client
+            UserProfile.objects.create(user=user, is_provider=False)
+            login(request, user)
+            messages.success(request, "Registration successful! You can now book services.")
+            return redirect('home')
+    else:
+        form = UserCreationForm()
+    return render(request, 'servicehub_app/register_client.html', {'form': form})    
+
+
+@login_required
+def client_history_view(request):
+    return render(request, 'servicehub_app/client_history.html')
+
+
+@login_required
+def complete_job(request, booking_id):
+    if request.method == 'POST':
+        # Ensure the job belongs to the logged-in provider
+        booking = get_object_or_404(Booking, id=booking_id, provider=request.user)
+
+        if booking.status != 'completed':
+            booking.status = 'completed'
+            booking.save()
+            return JsonResponse({'status': 'success', 'message': 'Job marked as completed!'})
+
+    return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
+
+
+@login_required
+def submit_rating(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        provider_user = get_object_or_404(User, username=data['provider_username'])
+
+        # Create or update the rating
+        Rating.objects.update_or_create(
+            client=request.user,
+            provider=provider_user,
+            defaults={'stars': data['stars'], 'comment': data.get('comment', '')}
+        )
+        return JsonResponse({'status': 'success'})
+    return JsonResponse({'status': 'error'}, status=400)
+
+
+
+@login_required
+def send_quote(request, booking_id):
+    if request.method == 'POST':
+        # Ensure the person quoting is the assigned provider
+        booking = get_object_or_404(Booking, id=booking_id, provider=request.user)
+
+        data = json.loads(request.body)
+        quote_price = data.get('price')
+
+        if quote_price:
+            booking.total_amount = quote_price
+            booking.status = 'Quoted'  # Move status from Pending to Quoted
+            booking.save()  # This triggers your 90/10 logic in models.py
+
+            return JsonResponse({'status': 'success', 'message': 'Quote sent!'})
+
+    return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
+
+
+@login_required
+def submit_feedback(request):
+    if request.method == 'POST':
+        data = json.loads(request.body)
+        # Determine type based on UserProfile
+        u_type = 'provider' if request.user.userprofile.is_provider else 'client'
+
+        Feedback.objects.create(
+            user=request.user,
+            user_type=u_type,
+            email=data['email'],
+            subject=data['subject'],
+            message=data['message']
+        )
+        return JsonResponse({'status': 'success', 'message': 'Thank you! Your feedback has been received.'})
+
+
+def contact_page(request):
+    return render(request, 'servicehub_app/contact.html')
